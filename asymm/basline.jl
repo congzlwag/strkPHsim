@@ -2,8 +2,8 @@ using LinearAlgebra
 import Statistics as Stat
 using Printf
 import HDF5
-include("utilsv2.jl")
-include("streakPH.jl")
+include("../utilsv2.jl")
+include("../streakPH.jl")
 
 # Define constants
 const h::Float64 = 4.13566766; # 
@@ -174,17 +174,18 @@ end
 
 
 #####Main input parameters######
-const STRK::Bool = true; # To simulate the streaked or unstreaked
-const PLOT::Bool = true; # To visualize the distributions or not
+const STRK::Bool = false; # To simulate the streaked or unstreaked
+const PLOT::Bool = false; # To visualize the distributions or not
 const hvX_eV_::Vector{Float64} = [40.8]; # central photon energies of the gaussian pulses
 const tauX::Float64 = 0.3; # in fs, FWHM duration of E_X(t), not I_X(t)
-const Tw = (-3, 5); # in fs, time window of simulation
+const Tw = (-4, 5); # in fs, time window of simulation
 const streak_wvl::Float64 = 1.85; # in um, central wavelength of streaking field
 const tauL::Float64 = 1e3; # in fs, FWHM duration of A_L(t), not I_L(t)
-const out_h5path::String = STRK ? "demoS.h5" : "demoUnS.h5" # path to the output h5 file
+const out_h5path::String = STRK ? "1psTwideS.h5" : "1psTwideUnS.h5" # path to the output h5 file
 
 # Create pulses
-w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-90:10:90)[2:end]);
+w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-180:6:180)[2:end]);
+# println(T_0[1])
 
 E_X, taxis, T_0 = prep_EXgaussian(hvX_eV_, tauX, T_0, streak=STRK, Twindow=Tw);
 
@@ -193,9 +194,9 @@ E_X .*= 1/200; # Global scaling
 
 # Configurate the ROI in momentum space
 config = Dict{String, Any}("Gamma"=>0.0)
-const dpr::Float64 = 8e-3 
+const dpr::Float64 = 4e-3 
 const dpz::Float64 = 0.2 
-const Npth::Int = 60; # Most of the time 180 is converged
+const Npth::Int = 120; # Most of the time 180 is converged
 config["dipole_matrix"] = dipole_M_H; # defined in utilsv2.jl
 config["Kmax"] = 1.8 # in a.u.
 config["Kmin"] = 0.3; # in a.u.
