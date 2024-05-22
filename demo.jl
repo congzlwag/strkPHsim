@@ -69,6 +69,14 @@ T_0: Vector of size (NT0, )
     dt::Real = (h/hvXc_eV) / Nt_per_cycle; # sampling dt in fs
     T_0 = streak ? T0_fs : [0.0] ;
     taxis = collect(Twindow[1]:dt:Twindow[2]);
+    t0early::Real = min(T_0...);
+    t0late::Real = max(T_0...);
+    if t0early - 3*tauX_fs < Twindow[1]
+        throw(ArgumentError("Integration start time $(Twindow[1])fs is too late for the earliest arrival time at $t0early. Adjust variable Tw"))
+    end
+    if t0late + 3*tauX_fs > Twindow[2]
+        throw(ArgumentError("Integration end time $(Twindow[2])fs is too early for the latest arrival time at $t0late. Adjust variable Tw"))
+    end
     E_X = [];
     for hvX in hvX_eV
         EX = build_Efield(taxis, T_0, E_Gauss; 
