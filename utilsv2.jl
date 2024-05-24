@@ -192,3 +192,8 @@ out =  @sprintf("%dp", Int(div(f,1)));
 out * rpad(@sprintf("%.2g", mod(f,1))[3:end], 1, '0')
 end
 
+import YAML
+function get_outdir(curdir::String)
+    wkdir_cfg = YAML.load_file("workspace.yaml");
+    wkdir_cfg["data_outroot"] * "/" * splitdir(curdir)[2]
+end

@@ -116,7 +116,7 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
     PH_p
 end
 
-function pz_integrate(density::Array{Float64}, pz_axis::Vector{T}) where {T<:Real}
+function pz_integrate(density::Array{Float64}, pz_axis::Union{Vector{T1},StepRangeLen{T1}}) where {T1<:Real}
     if (pz_axis[1] >= (pz_axis[2]-pz_axis[1])/2)
         selectdim(density,1,1) .*= 2; # compensate the 1/2 factor for the first point in trapz
     end
