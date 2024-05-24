@@ -1,15 +1,15 @@
 # Streaking Simulation of Photoelectron from Direct Ionization
 Function `PHInt_Pspace` in `streakPH.jl` computes the (unnormalized) distribution density of streaked photoelectron based on strong-field approximation. 
-For formulation, see [Li et al Opt. Express 26, 4, 4531 (2018)](https://doi.org/10.1364/OE.26.004531).
+Detailed derivations are in [Li et al Opt. Express 26, 4, 4531 (2018)](https://doi.org/10.1364/OE.26.004531).
 It uses multi-threading to parallelize over the momentum grid points. 
 
 
 ## Demo
-A working example is `strkPH_fairAmps.jl`. To run it:
+A working example is `demo.jl`. To run it:
 ```
-julia -t [nthread] -i strkPH_fairAmps.jl
+julia -t [nthread] -i demo.jl
 ```
-Here `[nthread]` is the number of threads, usually depends on the machine spec. 
+Here `[nthread]` is the number of threads, which is usually chosen according to the machine spec. 
 The interactive option `-i` allows the visualization to stay as the script is finished. 
 If no visualization is requested (`PLOT=false`) then `-i` is unnecessary. 
 
