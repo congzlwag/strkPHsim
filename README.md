@@ -16,6 +16,9 @@ If no visualization is requested (`PLOT=false`) then `-i` is unnecessary.
 The output is a hdf5 file specified by variable `out_h5path`.
 The control parameters for this demo is gathered under the comment line `#Main input parameters`. 
 
+## Generalization to Double Direct Ionization
+Function `PH2Int` in `streakPH2.jl` computes the (unnormalized) distribution density of two streaked photoelectrons from the same ionizing pulse. A working example is `DirectDouble/ddi_demo.jl` 
+
 ## Dependencies
 
 * julia >= 1.9.0
