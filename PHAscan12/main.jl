@@ -94,7 +94,7 @@ function cache_config(h5path, config)
         HDF5.attributes(cg)["Ip_eV"] = config["Ip"];
         HDF5.attributes(cg)["Gamma_invfs"] = config["Gamma"];
         for ky in ["tauX", "tauL"]
-            if ky in config
+            if ky in keys(config)
                 HDF5.write(cg, ky, config[ky]);
             end
         end
@@ -150,8 +150,8 @@ const dpr::Float64 = STRK ? 5e-3 : 2e-3
 const dpz::Float64 = 0.2 
 const Npth::Int = 180; # Most of the time 180 is converged
 config["dipole_matrix"] = dipole_M_H; # defined in utilsv2.jl
-config["Kmax"] = STRK ? 2.45 : 1.95; #1.7; # in a.u.
-config["Kmin"] = STRK ? 0.8 : 1.; # 0.32; # in a.u.
+config["Kmax"] = STRK ? 2.9 : 2.2;  # in a.u.
+config["Kmin"] = 1.; # 0.32; # in a.u.
 config["Ip"] = Ip1;
 config["tauX"] = tauX;
 
