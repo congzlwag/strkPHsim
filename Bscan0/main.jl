@@ -2,8 +2,8 @@ using LinearAlgebra
 import Statistics as Stat
 using Printf
 import HDF5
-include("utilsv2.jl")
-include("streakPH.jl")
+include("../utilsv2.jl")
+include("../streakPH.jl")
 
 # Define constants
 const h::Float64 = 4.13566766; #
@@ -91,16 +91,13 @@ end
 function cache_config(h5path, config)
     HDF5.h5open(h5path, "w") do cache_h5
         cg = HDF5.create_group(cache_h5, "config")
-        for ky in ["praxis", "qaxis", "Pz_slice"]
+        for ky in ["praxis", "qaxis", "Pz_slice", "tauX"]
             vals = config[ky];
             cg[ky] = collect(config[ky])
         end
         HDF5.attributes(cg)["lam_L_um"] = streak_wvl;
         HDF5.attributes(cg)["Ip_eV"] = config["Ip"];
         HDF5.attributes(cg)["Gamma_invfs"] = config["Gamma"];
-        if "beta2" in keys(config)
-            HDF5.attributes(cg)["beta2"] = beta2
-        end
         HDF5.create_group(cache_h5, "densities")
     end
 end
@@ -187,13 +184,13 @@ end
 #####Main input parameters######
 const STRK::Bool = false; # To simulate the streaked or unstreaked
 const PLOT::Bool = true; # To visualize the distributions or not
-const hvX_eV_::Vector{Float64} = [40.8+13.6]; # [68+27.2];# [40.8]; # central photon energies of the gaussian pulses
-const beta2::Float64 = 1.0;
+const hvX_eV_::Vector{Float64} = [40.8-13.6]; #[68]; #   # central photon energies of the gaussian pulses
+const beta2::Float64 = 2.0;
 const tauX::Float64 = 0.3; # in fs, FWHM duration of E_X(t), not I_X(t)
 const Tw = (-3, 5); # in fs, time window of simulation
 const streak_wvl::Float64 = 1.85; # in um, central wavelength of streaking field
 const tauL::Float64 = 1e3; # in fs, FWHM duration of A_L(t), not I_L(t)
-const out_h5path::String = STRK ? "demoS.h5" : "demoUnS.h5" # path to the output h5 file
+const out_h5path::String = STRK ? "ph4S.h5" : "ph4UnS.h5" # path to the output h5 file
 
 # Create pulses
 w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-90:10:90)[2:end]);
@@ -202,15 +199,16 @@ E_X, taxis, T_0 = prep_EXgaussian(hvX_eV_, tauX, T_0, streak=STRK, Twindow=Tw);
 
 A1_L = prep_ALgaussian(w_L, tauL, taxis);
 E_X .*= 1/200; # Global scaling
+A1_L .*= (STRK ? 0.1 : 0.0);
 
 # Configurate the ROI in momentum space
 config = Dict{String, Any}("Gamma"=>0.0)
-const dpr::Float64 = 8e-3
+const dpr::Float64 = 6e-3
 const dpz::Float64 = 0.2
-const Npth::Int = 60; # Most of the time 180 is converged
+const Npth::Int = 180; # Most of the time 180 is converged
 config["dipole_matrix"] = dipole_M_arb_beta; # defined in utilsv2.jl
-config["Kmax"] = 1.4 # in a.u.
-config["Kmin"] = 0.2 # 0.3; # in a.u.
+config["Kmax"] = 1.4; # 1.8^2 /2 # 2.4^2 /2 # 2.7^2 /2 #   in a.u.
+config["Kmin"] = 0.2; # 1.0^2 /2 # 1.6^2 /2 # 2.2^2 /2 #   in a.u.
 config["Ip"] = Ip1;
 config["beta2"] = beta2;
 config["tauX"] = tauX;
@@ -241,17 +239,18 @@ prep_config_Pgrid(config, Pz_slice=0)
 # such as Pz_slice="VMI"
 cache_config(out_h5path, config)
 
-function scanAmax(Amax::Vector{TA}, E_X::Array{T}, A1_L::Array{T}, taxis::Vector{T}, config::Dict{String,Any};
+function scan_beta2(beta_scan::Vector{TA}, E_X::Array{T}, A_L::Array{T}, taxis::Vector{T},
+                    config::Dict{String,Any};
                   out_h5path::String, pulse_kwargs::NamedTuple) where {T<:Real, TA<:Real}
-""" Scan ALmax in photoelectron streaking simulations
+""" Scan beta2 in photoelectron streaking simulations
 Parameters
 ----------
-Amax: Vector of size (Na, )
-      Maximal streaking amplitude to be scanned.
+beta_scan: Vector of size (Na, )
+      Beta2 to be scanned.
 E_X:  Array of size (Nt, NT0, Npulse) where Nt=len(taxis), NT0=len(arrival_timeT0), Npulse=[Number of pulses]
       E-field of ionization pulses. Each pulse is scanned at NT0 arrival times
-A1_L: Array of size (Nt, 2)
-      (x,y) components of the Streaking Vector Potential, in a.u. The maximum must be 1a.u.
+A_L: Array of size (Nt, 2)
+      (x,y) components of the Streaking Vector Potential, in a.u.
 
 Output is written into out_h5path.
 
@@ -267,24 +266,25 @@ densities: Array of size (NT0, Npulse, Npr, Ntheta)
     densities::Array{Float64} = fill(0., 1);
 
     cache_scanvars(out_h5path; Theta0_deg=T_0.*((180*w_L)/pi),
-                   Amax=Amax, pulse_kwargs...)
-    for (i,Amax) in enumerate(Amax_)
-        # fname::String = @sprintf("./phA%s%s.mat", f2str(Amax), Ztype);
-        A_L = A1_L .* Amax;
+                   beta2=beta_scan, pulse_kwargs...)
+    for (i, beta) in enumerate(beta_scan)
+        config["beta2"] = beta
         densities = PHInt_Pspace(E_X_reshaped, A_L, taxis, config);
         densities = reshape(densities, EXgridsize...,
                             length(config["praxis"]), :);
-        save_density(out_h5path, densities, "A"*f2str(Amax); ALmax=Amax)
+        save_density(out_h5path, densities, "b"*f2str(beta); beta2=beta)
     end
     return densities
 end
 
-Amax_ = STRK ? [0.1, ] : [0.];
-densities = scanAmax(Amax_, E_X, A1_L, taxis, config,
+# Amax_ = STRK ? [0.1, ] : [0.];
+# const beta_scan = cat(0.0:0.4:1.2, 1.3:0.1:2.0; dims=1);
+const beta_scan = collect(0.9:0.1:1.1);
+densities = scan_beta2(beta_scan, E_X, A1_L, taxis, config,
                      out_h5path=out_h5path, pulse_kwargs=(hvX_eV=hvX_eV_,))
 # If the pulse shapes are numbered by some other parameter, just replace hvX_eV with that
 
-if PLOT
-    visualize_pulses(E_X)
-    visualize_densities(densities, config)
-end
+# if PLOT
+#     visualize_pulses(E_X)
+#     visualize_densities(densities, config)
+# end
