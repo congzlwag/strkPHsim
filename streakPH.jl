@@ -1,5 +1,5 @@
 using FLoops
-function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2}, 
+function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
          t_X::Array{Float64,1}, config::Dict{String, Any} )::Array{Float64}
 """
     Calculate complex amplitude of Photoelectron, based on the SFA model
@@ -24,11 +24,16 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
     K_min::Float64 = get(config, "Kmin", 0.0);
     dipoleM::Function = config["dipole_matrix"];
     Zaccum::Bool=get(config, "accumPz", true);
-    
-    t_X = t_X / T_AU; 
+    dipole_kwargs = Dict(:Ip_au => I_p)
+    if "beta2" in keys(config)
+        merge!(dipole_kwargs, Dict(:beta => config["beta2"]));
+    end
+    # beta2::Float64 = get(config, "beta2", 2.0);
+
+    t_X = t_X / T_AU;
     t_X .-= t_X[1];
     # From now on, everything is in a.u.
-    
+
     NT0::Int = size(E_X,2); # Number of electric fields to simulate
     N_t::Int = size(t_X,1); # Number of time points
     difftX = diff(t_X);
@@ -39,7 +44,6 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
         dt = t_X; # println("Non-uniform t grid")
     end
     difftX = nothing;
-    
     # Setup momentum grid
     dpz = config["dpz"];
     @assert haskey(config, "Pz_slice")
@@ -55,11 +59,11 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
     # Allocate memory for PH_p
     hasZaxis::Bool = ~isa(config["Pz_slice"], Real) & ~Zaccum; # Whether the result has Pzaxis
     PH_p::Array{Float64} = hasZaxis ?  fill(0.0, N_pz, NT0, N_pi) : fill(0.0, NT0, N_pi);
-    
+
     #Phase from photoionization
     Phase_PI::Array{ComplexF64,1} = exp.( (1im * I_p + Gamma/2 ).* (t_X .- t_X[1]) ); # size=(N_t,)
     PI_ints::Array{ComplexF64,2} = E_X .* Phase_PI;
-    
+
     P_xm = vec(collect(P_xm)); P_ym = vec(collect(P_ym));
     let dt=dt
         @floop ThreadedEx() for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
@@ -86,12 +90,12 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
                 density_xy .= 0;
                 for ind_z in 1:N_pz
                     K_z = (1/2) * (P_z[ind_z])^2;
-                    # zphase_rate = 1im * K_z; #- (Gamma/2); 
+                    # zphase_rate = 1im * K_z; #- (Gamma/2);
                     # Phase_z .= exp.( (1im * K_z ) .* (t_X .- t_X[1]) );
                     if (K_min > (1/2) * (Px^2 + Py^2) + K_z)
                         continue
                     end
-                    @. diple = dipoleM(V_x, V_x^2+V_y^2+2*K_z; Ip_au=I_p); 
+                    @. diple = dipoleM(V_x, V_x^2+V_y^2+2*K_z; dipole_kwargs...);
                     intgrand = (exp(1im * (vlkv+K_z*t)) * Pint*d for (t,vlkv,Pint,d) in zip(t_X,I_xy,PI_int,diple));
                     # @. intgrand = Phase_xy * Phase_z * PI_int;
                     increment::Float64 = abs(only(sum(intgrand)*dt)) ^2;
@@ -123,7 +127,7 @@ function pz_integrate(density::Array{Float64}, pz_axis::Union{Vector{T1},StepRan
     itrapz(density, pz_axis, dim=1)
 end
 
-# function scanIP_ph(Ips_au::Vector{Float64}, E_X::Array{Float64,2}, A::Array{Float64,2}, 
+# function scanIP_ph(Ips_au::Vector{Float64}, E_X::Array{Float64,2}, A::Array{Float64,2},
 #          t_X::Array{Float64,1}, config::Dict{String, Any})::Array{Float64}
 #     config["Ip"] = Ips_au[1];
 #     ph_out = PHInt_Pspace(E_X, A, t_X, config);
