@@ -26,8 +26,8 @@ function get_Pgrid(Np::Int, Pz_Slice, dpz::Real)
 end
 
 function get_Pgrid(Np::Array{T, 2}, Pz_Slice, dpz::Real) where {T<:Real}
-    P_xm = @view Np[:,1]; 
-    P_ym = @view Np[:,2]; 
+    P_xm = @view Np[:,1];
+    P_ym = @view Np[:,2];
     if Pz_Slice!=nothing
         P_z = Pz_Slice
     elseif size(Np,2) >= 3
@@ -39,8 +39,8 @@ function get_Pgrid(Np::Array{T, 2}, Pz_Slice, dpz::Real) where {T<:Real}
 end
 
 function get_Pgrid(Np::Vector{T}, Pz_Slice, dpz::Real) where {T<:Base.Generator}
-    P_xm = Np[1]; 
-    P_ym = Np[2]; 
+    P_xm = Np[1];
+    P_ym = Np[2];
     if Pz_Slice!=nothing
         P_z = Pz_Slice
     elseif length(tmps) >= 3
@@ -149,6 +149,21 @@ function itrapz(integrand::AbstractArray{T}, t::Union{Vector{T1},StepRangeLen{T1
     ret .*= 0.5
 end
 
+function get_dtaxis(t_X::Vector{T}) where {T <: Real}
+    difftX = diff(t_X);
+    N_t::Int = size(t_X,1);
+    if Stat.std(difftX)  < 1E-3 * abs(Stat.mean(difftX)) # Check if step size is uniform
+        dt = (t_X[end]-t_X[1]) / ( N_t - 1 ); # println("Uniform t grid")
+        tweight = Iterators.repeated(dt);
+    else # Variable step size
+        # dt = difftX; # println("Non-uniform t grid")
+        tweight = cat(difftX,[0.],dims=1);
+        tweight .+= cat(difftX[1:1],difftX,dims=1);
+        tweight .*= 0.5;
+        dt = tweight;
+    end
+    return (dt, tweight)
+end
 
 """Dipole function"""
 function dipole_M_H(Px::Real, P2::Real; Ip_au::Real=0.5, Py::Real=0, Pz::Real=0)::Real
@@ -160,17 +175,31 @@ function dipole_M_H(Px::Real, P2::Real; Ip_au::Real=0.5, Py::Real=0, Pz::Real=0)
     """
     # mesh of P^2 values
     local P2local = (P2 >= Px^2) ? P2 : Px^2+Py^2+Pz^2;
-    # if P2 <= 0
-    #     P2local = Px^2+Py^2+Pz^2;
-    # else
-    #     P2local = P2;
-    # end
     # Prefactor
-    F = 2^(7.0/2) * (2*Ip_au)^(5.0/4) / pi; 
+    F = 2^(7.0/2) * (2*Ip_au)^(5.0/4) / pi;
     d = F * Px / ( P2local + 2*Ip_au )^3;
     d
 end
-# function dipole_M_H(Px, Py, 
+
+function dipole_M_arb_beta(Px::Real, P2::Real; Ip_au::Real=0.5, Py::Real=0, Pz::Real=0, beta::Real=2)::Real
+    """This function calculates the dipole moment for
+    ionization of a synthetic atomic system whose beta2 is tunable.
+    At beta=2, it reduces to the Hydrogen atom.
+    d_x = sqrt(beta/2 * Px^2 + (1/3-beta/6) * P^2) ./ (P^2 + 2*Ip).^3;
+    Px, Py, Pz: momentum components in a.u.
+        Can be vectorized
+    Ip_au: ionization potential in a.u.
+    """
+    # mesh of P^2 values
+    local P2local = (P2 >= Px^2) ? P2 : Px^2+Py^2+Pz^2;
+    # Prefactor
+    F = 2^(7.0/2) * (2*Ip_au)^(5.0/4) / pi;
+    half_beta = beta/2;
+    Px_syn = sqrt(half_beta * Px^2 + (1-half_beta)/3 * P2local);
+    d = F * Px_syn / ( P2local + 2*Ip_au )^3;
+    d
+end
+# function dipole_M_H(Px, Py,
 #                     Pz, Ip_au::Real=0.5)::Real
 #     """This function calculates the dipole moment for ionization of a hydrogen
 #     atom. d = P ./ (P^2 + 2*Ip).^3;
@@ -181,7 +210,7 @@ end
 #     # mesh of P^2 values
 #     P2 = Px^2+Py^2+Pz^2;
 #     # Prefactor
-#     F = 2^(7.0/2) * (2*Ip_au)^(5.0/4) / pi; 
+#     F = 2^(7.0/2) * (2*Ip_au)^(5.0/4) / pi;
 #     d = F * Px / ( P2 + 2*Ip_au )^3;
 #     d
 # end

@@ -36,14 +36,8 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
 
     NT0::Int = size(E_X,2); # Number of electric fields to simulate
     N_t::Int = size(t_X,1); # Number of time points
-    difftX = diff(t_X);
-    # Uniform_Step_Size::Bool = true;
-    if Stat.std(difftX)  < 1E-3 * abs(Stat.mean(difftX)) # Check if step size is uniform
-        dt = (t_X[end]-t_X[1]) / ( N_t - 1 ); # println("Uniform t grid")
-    else # Variable step size
-        dt = t_X; # println("Non-uniform t grid")
-    end
-    difftX = nothing;
+    (dt, tw_iter) = get_dtaxis(t_X);
+
     # Setup momentum grid
     dpz = config["dpz"];
     @assert haskey(config, "Pz_slice")
@@ -52,9 +46,6 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
     P_xm = collect(P_xm); P_ym = collect(P_ym);
     N_pz = length(P_z); # number of z-points
     N_pi = length(P_xm);
-    # if !(haskey(config, "Pz_slice"))
-    #     config["Pz_slice"] = P_z;
-    # end
 
     # Allocate memory for PH_p
     hasZaxis::Bool = ~isa(config["Pz_slice"], Real) & ~Zaccum; # Whether the result has Pzaxis
@@ -65,58 +56,57 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
     PI_ints::Array{ComplexF64,2} = E_X .* Phase_PI;
 
     P_xm = vec(collect(P_xm)); P_ym = vec(collect(P_ym));
-    let dt=dt
-        @floop ThreadedEx() for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
-        # for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
-            @init begin
-                I_xy = Vector{Float64}(undef,N_t);
-                diple = Vector{Float64}(undef,N_t);
-                V_x = Vector{Float64}(undef,N_t);
-                V_y = Vector{Float64}(undef,N_t);
-                density_xy = Vector{Float64}(undef,N_pz);
-            end
-            V_x .= Px .- view(A, :, 1);
-            V_y .= Py .- view(A, :, 2);
-            # I_xy = Vector{Float64}(undef,N_t);
+    # let dt=dt
+    @floop ThreadedEx() for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
+    # for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
+        @init begin
+            I_xy = Vector{Float64}(undef,N_t);
             # diple = Vector{Float64}(undef,N_t);
-            # V_x = Px .- view(A, :, 1);
-            # V_y = Py .- view(A, :, 2);
+            V_x = Vector{Float64}(undef,N_t);
+            V_y = Vector{Float64}(undef,N_t);
+            vstates = Vector{ComplexF64}(undef,N_t);
+            density_xy = Vector{Float64}(undef,N_pz);
+            intgrand = Vector{ComplexF64}(undef,N_t);
+        end
+        V_x .= Px .- view(A, :, 1);
+        V_y .= Py .- view(A, :, 2);
 
-            @. I_xy = (1/2) * ( V_x^2 + V_y^2 );
-            cum_Integrate!(I_xy, dt, dim=1);
-            # Volkov phase, w/o changing I_xy because it'll be reused in calculating the dipole
-            for ind_calc in 1:NT0
-                PI_int = @inbounds @view PI_ints[:,ind_calc]; # size=(N_t,)
-                density_xy .= 0;
-                for ind_z in 1:N_pz
-                    K_z = (1/2) * (P_z[ind_z])^2;
-                    # zphase_rate = 1im * K_z; #- (Gamma/2);
-                    # Phase_z .= exp.( (1im * K_z ) .* (t_X .- t_X[1]) );
-                    if (K_min > (1/2) * (Px^2 + Py^2) + K_z)
-                        continue
-                    end
-                    @. diple = dipoleM(V_x, V_x^2+V_y^2+2*K_z; dipole_kwargs...);
-                    intgrand = (exp(1im * (vlkv+K_z*t)) * Pint*d for (t,vlkv,Pint,d) in zip(t_X,I_xy,PI_int,diple));
-                    # @. intgrand = Phase_xy * Phase_z * PI_int;
-                    increment::Float64 = abs(only(sum(intgrand)*dt)) ^2;
-                    if hasZaxis
-                        PH_p[ind_z,ind_calc,ind_p] = increment;
-                    elseif (N_pz==1)
-                        PH_p[ind_calc,ind_p] = increment;
-                    else # Integrate over Pz
-                        # increment *= dpz;
-                        # if P_z[1]<0.01*P_z[2]
-                        #     increment *= 0.5; # Pz=0 has half the normal contribution to the pz projection
-                        # end
-                        density_xy[ind_z] = increment;
-                    end
+        @. I_xy = (1/2) * ( V_x^2 + V_y^2 );
+        cum_Integrate!(I_xy, dt, dim=1);
+        @. vstates = exp(-1im * I_xy);
+        for ind_calc in 1:NT0
+            PI_int = @inbounds @view PI_ints[:,ind_calc]; # size=(N_t,)
+            density_xy .= 0;
+
+            for ind_z in 1:N_pz
+                K_z = (1/2) * (P_z[ind_z])^2;
+                # zphase_rate = 1im * K_z; #- (Gamma/2);
+                # Phase_z .= exp.( (1im * K_z ) .* (t_X .- t_X[1]) );
+                if (K_min > (1/2) * (Px^2 + Py^2) + K_z)
+                    continue
                 end
-                if ~(hasZaxis | N_pz==1)
-                    PH_p[ind_calc,ind_p] += only(pz_integrate(density_xy, P_z));
+                @. intgrand = dipoleM(V_x, V_x^2+V_y^2+2*K_z; Ip_au=I_p);
+                @. intgrand *= exp((1im * K_z)*t_X);
+                @. intgrand *= PI_int * dt;
+                increment::Float64 = abs(only(dot(vstates, intgrand))) ^2;
+                if hasZaxis
+                    PH_p[ind_z,ind_calc,ind_p] = increment;
+                elseif (N_pz==1)
+                    PH_p[ind_calc,ind_p] = increment;
+                else # Integrate over Pz
+                    # increment *= dpz;
+                    # if P_z[1]<0.01*P_z[2]
+                    #     increment *= 0.5; # Pz=0 has half the normal contribution to the pz projection
+                    # end
+                    density_xy[ind_z] = increment;
                 end
+            end
+            if ~(hasZaxis | N_pz==1)
+                PH_p[ind_calc,ind_p] += only(pz_integrate(density_xy, P_z));
             end
         end
     end
+    # end
     PH_p
 end
 
