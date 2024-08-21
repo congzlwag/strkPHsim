@@ -57,7 +57,7 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
 
     P_xm = vec(collect(P_xm)); P_ym = vec(collect(P_ym));
     # let dt=dt
-    @floop ThreadedEx() for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
+    @floop ThreadedEx(basesize=3) for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
     # for (ind_p, Px,Py) in zip(1:N_pi, P_xm, P_ym)
         @init begin
             I_xy = Vector{Float64}(undef,N_t);
@@ -107,6 +107,7 @@ function PHInt_Pspace(E_X::Array{Float64,2}, A::Array{Float64,2},
         end
     end
     # end
+    # print("    Floop ended...")
     PH_p
 end
 
