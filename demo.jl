@@ -185,9 +185,9 @@ end
 
 
 #####Main input parameters######
-const STRK::Bool = false; # To simulate the streaked or unstreaked
+const STRK::Bool = true; # To simulate the streaked or unstreaked
 const PLOT::Bool = true; # To visualize the distributions or not
-const hvX_eV_::Vector{Float64} = [40.8+13.6]; # [68+27.2];# [40.8]; # central photon energies of the gaussian pulses
+const hvX_eV_::Vector{Float64} = 40.8 .+ collect(-2.0:0.2:2.0); # central photon energies of the gaussian pulses
 const beta2::Float64 = 1.0;
 const tauX::Float64 = 0.3; # in fs, FWHM duration of E_X(t), not I_X(t)
 const Tw = (-3, 5); # in fs, time window of simulation
@@ -196,7 +196,7 @@ const tauL::Float64 = 1e3; # in fs, FWHM duration of A_L(t), not I_L(t)
 const out_h5path::String = STRK ? "demoS.h5" : "demoUnS.h5" # path to the output h5 file
 
 # Create pulses
-w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-90:10:90)[2:end]);
+w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-90:20:90)[2:end]);
 
 E_X, taxis, T_0 = prep_EXgaussian(hvX_eV_, tauX, T_0, streak=STRK, Twindow=Tw);
 
@@ -207,10 +207,10 @@ E_X .*= 1/200; # Global scaling
 config = Dict{String, Any}("Gamma"=>0.0)
 const dpr::Float64 = 8e-3
 const dpz::Float64 = 0.2
-const Npth::Int = 60; # Most of the time 180 is converged
+const Npth::Int = 40; # Most of the time 180 is converged
 config["dipole_matrix"] = dipole_M_arb_beta; # defined in utilsv2.jl
-config["Kmax"] = 1.4 # in a.u.
-config["Kmin"] = 0.2 # 0.3; # in a.u.
+config["Kmax"] = STRK ? 2.7 : 1.7;  # in a.u.
+config["Kmin"] = 0.9; # 0.32; # in a.u.
 config["Ip"] = Ip1;
 config["beta2"] = beta2;
 config["tauX"] = tauX;
@@ -279,7 +279,7 @@ densities: Array of size (NT0, Npulse, Npr, Ntheta)
     return densities
 end
 
-Amax_ = STRK ? [0.1, ] : [0.];
+Amax_ = STRK ? [0.65, ] : [0.];
 densities = scanAmax(Amax_, E_X, A1_L, taxis, config,
                      out_h5path=out_h5path, pulse_kwargs=(hvX_eV=hvX_eV_,))
 # If the pulse shapes are numbered by some other parameter, just replace hvX_eV with that

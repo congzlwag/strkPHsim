@@ -184,13 +184,13 @@ end
 #####Main input parameters######
 const STRK::Bool = false; # To simulate the streaked or unstreaked
 const PLOT::Bool = true; # To visualize the distributions or not
-const hvX_eV_::Vector{Float64} = [40.8-13.6]; #[68]; #   # central photon energies of the gaussian pulses
+const hvX_eV_::Vector{Float64} = [68+27.2*4]; #[68]; #   # central photon energies of the gaussian pulses
 const beta2::Float64 = 2.0;
 const tauX::Float64 = 0.3; # in fs, FWHM duration of E_X(t), not I_X(t)
 const Tw = (-3, 5); # in fs, time window of simulation
 const streak_wvl::Float64 = 1.85; # in um, central wavelength of streaking field
 const tauL::Float64 = 1e3; # in fs, FWHM duration of A_L(t), not I_L(t)
-const out_h5path::String = STRK ? "ph4S.h5" : "ph4UnS.h5" # path to the output h5 file
+const out_h5path::String = STRK ? "ph7S.h5" : "ph7UnS.h5" # path to the output h5 file
 
 # Create pulses
 w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-90:10:90)[2:end]);
@@ -207,8 +207,8 @@ const dpr::Float64 = 6e-3
 const dpz::Float64 = 0.2
 const Npth::Int = 180; # Most of the time 180 is converged
 config["dipole_matrix"] = dipole_M_arb_beta; # defined in utilsv2.jl
-config["Kmax"] = 1.4; # 1.8^2 /2 # 2.4^2 /2 # 2.7^2 /2 #   in a.u.
-config["Kmin"] = 0.2; # 1.0^2 /2 # 1.6^2 /2 # 2.2^2 /2 #   in a.u.
+config["Kmax"] = 3.6^2 /2; # 1.8^2 /2 # 2.4^2 /2 # 2.7^2 /2 #   in a.u.
+config["Kmin"] = 3.3^2 /2; # 1.0^2 /2 # 1.6^2 /2 # 2.2^2 /2 #   in a.u.
 config["Ip"] = Ip1;
 config["beta2"] = beta2;
 config["tauX"] = tauX;
@@ -279,7 +279,7 @@ end
 
 # Amax_ = STRK ? [0.1, ] : [0.];
 # const beta_scan = cat(0.0:0.4:1.2, 1.3:0.1:2.0; dims=1);
-const beta_scan = collect(0.9:0.1:1.1);
+const beta_scan = [2.0]; #collect(0.9:0.1:1.1);
 densities = scan_beta2(beta_scan, E_X, A1_L, taxis, config,
                      out_h5path=out_h5path, pulse_kwargs=(hvX_eV=hvX_eV_,))
 # If the pulse shapes are numbered by some other parameter, just replace hvX_eV with that
