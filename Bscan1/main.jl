@@ -1,0 +1,257 @@
+using LinearAlgebra
+import Statistics as Stat
+using Printf
+import HDF5
+include("../utilsv2.jl")
+include("../streakPH.jl")
+
+# Define constants
+const h::Float64 = 4.13566766; #
+const F_AU::Float64 = 5.142206707 * 1e10; # V/m to a.u.
+const T_AU::Float64 = 0.024189; # fs to a.u.
+const E_AU::Float64 = 27.2114; # eV to a.u.
+const c0::Float64 = 0.29979; # in um/fs
+
+const Ip1::Float64 = 13.6; # Ionization potential
+
+# Functions to build E-field
+E_Gauss(t_T0;w=1,tau=1,phi=0) = exp( -4*log(2) * ((t_T0)/tau)^2 ) * cos(w*t_T0 + phi);
+
+function build_Efield(taxis::Vector{T}, T_0::Vector{T0}, Efunc::Function;
+                      kwargs...)::Array{T} where {T0<:Real, T<:Real}
+    t_T0 = taxis .- T_0';
+    @. Efunc(t_T0; kwargs...)
+end
+
+function sample_arrival_time(;lambdaL_um, Theta0_deg)
+    w_L = 2*pi*(c0/lambdaL_um); # Streaking Laser frequency, in rad/fs
+    T_0 = Theta0_deg .* (pi/(180*w_L));
+    return w_L, T_0
+end
+
+function prep_ALgaussian(w_L, tauL_fs, taxis)
+    A_L = Array{Float64}(undef, length(taxis), 2);
+    for i in 1:2
+        A_L[:,i] .= view(build_Efield(taxis, [0.0], E_Gauss; w=w_L,
+                                      tau=tauL_fs, phi=(i-2)*pi/2), :, 1);
+    end
+    return A_L
+end
+
+function prep_EXgaussian(hvX_eV::AbstractVector{T}, tauX_fs::Real,
+                         T0_fs::AbstractVector{T};
+                         streak::Bool=true, Nt_per_cycle::Int=36,
+                         Twindow=(-3,5), phi::Real=0) where {T<:Real}
+"""
+Prepare E-field of Gaussian pulses, using function E_Gauss
+Parameters
+----------
+hvX_eV: central photon energies
+tauX_fs: pulse duration, FWHM of E_X(t)
+T0_fs: arrival time of the pulses
+streak: to streak or not, if not, T_0 will be forced to be [0.]
+Nt_per_cycle: number of time points in one optical cycle of the pulse.
+Twindow: in fs, Time window of the simulation.
+         Note this window has to cover all the ionization pulses, but not necessarily the whole streaking pulse,
+         because the integrand in the SFA integral is bounded by the |E_X|, as long as |E_X| vanishes (<some threshold),
+         no more contribution will come from later time.
+phi: phase (w.r.t streaking field) of the carrier frequency in E_X(t)
+Returns
+----------
+E_X: Array of size (Nt, NT0, Npulse) where Nt=len(taxis), NT0=len(arrival_timeT0), Npulse=[Number of pulses]
+     E-field of ionization pulses. Each pulse is scanned at NT0 arrival times
+taxis: Vector of size (Nt, ).
+     The uniformly sampled time axis, with dt determined by Nt_per_cycle
+T_0: Vector of size (NT0, )
+     The arrival time of ionization pulses
+"""
+    hvXc_eV::Real = hvX_eV[div(length(hvX_eV),2)+1];
+    dt::Real = (h/hvXc_eV) / Nt_per_cycle; # sampling dt in fs
+    T_0 = streak ? T0_fs : [0.0] ;
+    taxis = collect(Twindow[1]:dt:Twindow[2]);
+    t0early::Real = min(T_0...);
+    t0late::Real = max(T_0...);
+    if t0early - 3*tauX_fs < Twindow[1]
+        throw(ArgumentError("Integration start time $(Twindow[1])fs is too late for the earliest arrival time at $t0early. Adjust variable Tw"))
+    end
+    if t0late + 3*tauX_fs > Twindow[2]
+        throw(ArgumentError("Integration end time $(Twindow[2])fs is too early for the latest arrival time at $t0late. Adjust variable Tw"))
+    end
+    E_X = [];
+    for hvX in hvX_eV
+        EX = build_Efield(taxis, T_0, E_Gauss;
+                          w=hvX * (2*pi/h), tau=tauX_fs, phi=phi);
+        push!(E_X, EX);
+    end
+    E_X = stack(E_X);
+    return E_X, taxis, T_0
+end
+
+# Functions for output
+function cache_config(h5path, config)
+    HDF5.h5open(h5path, "w") do cache_h5
+        cg = HDF5.create_group(cache_h5, "config")
+        for ky in ["praxis", "qaxis", "Pz_slice", "tauX"]
+            vals = config[ky];
+            cg[ky] = collect(config[ky])
+        end
+        HDF5.attributes(cg)["lam_L_um"] = streak_wvl;
+        HDF5.attributes(cg)["Ip_eV"] = config["Ip"];
+        HDF5.attributes(cg)["Gamma_invfs"] = config["Gamma"];
+        HDF5.create_group(cache_h5, "densities")
+    end
+end
+function cache_scanvars(h5path; kwargs...)
+    HDF5.h5open(h5path, "r+") do cache_h5
+        sc = HDF5.create_group(cache_h5, "scan")
+        for (ky, val) in Dict(kwargs)
+            ky = String(ky);
+            # println(ky)
+            dset = HDF5.create_dataset(sc, ky, eltype(val), size(val))
+            HDF5.write(dset, val)
+        end
+    end
+end
+function save_density(h5path, densities, tag::String; attrs...)
+    HDF5.h5open(h5path, "r+") do cache_h5
+        dg = cache_h5["densities"]
+        dset = HDF5.create_dataset(dg, tag, eltype(densities), size(densities))
+        HDF5.write(dset, densities)
+        for (ky, val) in Dict(attrs)
+            ky = String(ky)
+            HDF5.attributes(dset)[ky] = val
+        end
+    end
+end
+
+function read_h5_data(file_path::String)
+    # Open the HDF5 file
+    h5file = HDF5.h5open(file_path, "r") do file
+        # Read the dataset "scan/hvX_eV"
+        hvX_eV = HDF5.read(file["scan/hvX_eV"])
+        # Read the dataset "config/praxis"
+        praxis = HDF5.read(file["config/praxis"])
+        # Find the minimum and maximum of "config/praxis"
+        minKE = minimum(praxis)^2 /2
+        maxKE = maximum(praxis)^2 /2
+        # Return a tuple containing the desired information
+        return (hvX_eV, minKE, maxKE)
+    end
+end
+
+function parse_input()
+    ind::Int64 = parse(Int64, ARGS[1]);
+    ref_fname = "../Bscan0/ph$(ind)UnS.h5";
+    (hvX_eV, minKE, maxKE) = read_h5_data(ref_fname);
+    out_fname = "./ph$(ind)UnS.h5";
+    println((hvX_eV, out_fname, minKE, maxKE))
+    return (hvX_eV, out_fname, minKE, maxKE)
+end
+
+#####Main input parameters######
+const STRK::Bool = false; # To simulate the streaked or unstreaked
+const PLOT::Bool = true; # To visualize the distributions or not
+# const hvX_eV_::Vector{Float64} = [68+27.2*4]; #[68]; #   # central photon energies of the gaussian pulses
+const beta2::Float64 = 2.0;
+const tauX::Float64 = 0.3; # in fs, FWHM duration of E_X(t), not I_X(t)
+const Tw = (-3, 5); # in fs, time window of simulation
+const streak_wvl::Float64 = 1.85; # in um, central wavelength of streaking field
+const tauL::Float64 = 1e3; # in fs, FWHM duration of A_L(t), not I_L(t)
+const (hvX_eV_, out_h5path, Kmin, Kmax) = parse_input()
+
+# Create pulses
+w_L, T_0 = sample_arrival_time(lambdaL_um=streak_wvl, Theta0_deg=collect(-90:10:90)[2:end]);
+
+E_X, taxis, T_0 = prep_EXgaussian(hvX_eV_, tauX, T_0, streak=STRK, Twindow=Tw);
+
+A1_L = prep_ALgaussian(w_L, tauL, taxis);
+E_X .*= 1/200; # Global scaling
+A1_L .*= (STRK ? 0.1 : 0.0);
+
+# Configurate the ROI in momentum space
+config = Dict{String, Any}("Gamma"=>0.0)
+const dpr::Float64 = 6e-3
+const dpz::Float64 = 0.1
+const Npth::Int = 180; # Most of the time 180 is converged
+config["dipole_matrix"] = dipole_M_arb_beta; # defined in utilsv2.jl
+config["Kmax"] = Kmax; # 1.8^2 /2 # 2.4^2 /2 # 2.7^2 /2 #   in a.u.
+config["Kmin"] = Kmin; # 1.0^2 /2 # 1.6^2 /2 # 2.2^2 /2 #   in a.u.
+config["Ip"] = Ip1;
+config["beta2"] = beta2;
+config["tauX"] = tauX;
+config["tauL"] = tauL;
+
+function prep_config_Pgrid(config::Dict{String, Any}; Pz_slice=0)
+    Prmax::Float64 = sqrt(2*config["Kmax"]);
+    Prmin::Float64 = sqrt(2*get(config,"Kmin",0.));
+    Npr::Int = div(Prmax-Prmin, dpr);# 512*2;
+    config["dpz"] = dpz;
+    praxis, qaxis, Pxym = gen_PxyPolgrid(Prmax, Npr;
+                                         Pmin=Prmin, Nth=Npth);
+    config["Np"] = Pxym;
+    config["praxis"] = praxis;
+    config["qaxis"] = qaxis;
+    if isa(Pz_slice, Real)
+        # Slice the probability density at a specific Pz
+        config["Pz_slice"] = Pz_slice;
+    else
+        # The probability density will be integrated over Pz
+        Pzmax::Float64 = sqrt(2*(config["Kmax"] - get(config,"Kmin",0.0)));
+        config["Pz_slice"] = dpz/2:dpz:Pzmax;
+    end
+end
+
+prep_config_Pgrid(config, Pz_slice="VMI")
+# anything but a real number for Pz_slice results in integration over Pz
+# such as Pz_slice="VMI"
+cache_config(out_h5path, config)
+
+function scan_beta2(beta_scan::Vector{TA}, E_X::Array{T}, A_L::Array{T}, taxis::Vector{T},
+                    config::Dict{String,Any};
+                  out_h5path::String, pulse_kwargs::NamedTuple) where {T<:Real, TA<:Real}
+""" Scan beta2 in photoelectron streaking simulations
+Parameters
+----------
+beta_scan: Vector of size (Na, )
+      Beta2 to be scanned.
+E_X:  Array of size (Nt, NT0, Npulse) where Nt=len(taxis), NT0=len(arrival_timeT0), Npulse=[Number of pulses]
+      E-field of ionization pulses. Each pulse is scanned at NT0 arrival times
+A_L: Array of size (Nt, 2)
+      (x,y) components of the Streaking Vector Potential, in a.u.
+
+Output is written into out_h5path.
+
+Return
+-----------
+densities: Array of size (NT0, Npulse, Npr, Ntheta)
+           The distribution densities of streaked photoelectron, for the (NT0, Npulse) ionizing pulses,
+           at the last streaking amplitude in Amax.
+"""
+    # Ztype::String = isa(config["Pz_slice"], Real) ? "slice" : "proj";
+    local EXgridsize = size(E_X)[2:end];
+    E_X_reshaped = reshape(E_X, size(E_X,1), :);
+    densities::Array{Float64} = fill(0., 1);
+
+    cache_scanvars(out_h5path; Theta0_deg=T_0.*((180*w_L)/pi),
+                   beta2=beta_scan, pulse_kwargs...)
+    for (i, beta) in enumerate(beta_scan)
+        config["beta2"] = beta
+        densities = PHInt_Pspace(E_X_reshaped, A_L, taxis, config);
+        densities = reshape(densities, EXgridsize...,
+                            length(config["praxis"]), :);
+        save_density(out_h5path, densities, "b"*f2str(beta); beta2=beta)
+    end
+    return densities
+end
+
+# Amax_ = STRK ? [0.1, ] : [0.];
+# const beta_scan = cat(0.0:0.4:1.2, 1.3:0.1:2.0; dims=1);
+const beta_scan = [2.0]; #collect(0.9:0.1:1.1);
+densities = scan_beta2(beta_scan, E_X, A1_L, taxis, config,
+                     out_h5path=out_h5path, pulse_kwargs=(hvX_eV=hvX_eV_,))
+# If the pulse shapes are numbered by some other parameter, just replace hvX_eV with that
+
+# if PLOT
+#     visualize_pulses(E_X)
+#     visualize_densities(densities, config)
+# end
